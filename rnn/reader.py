@@ -24,10 +24,10 @@ import os
 import sys
 
 import tensorflow as tf
-import gensim
+from gensim.models.keyedvectors import KeyedVectors
 import numpy as np
 
-model = gensim.models.KeyedVectors.load_word2vec_format('../models/GoogleNews-vectors-negative300.bin.gz', binary=True)
+model = KeyedVectors.load_word2vec_format('../models/GoogleNews-vectors-negative300.bin.gz', binary=True)
 word2vec_dim = 300
 
 ner_cls = {}
