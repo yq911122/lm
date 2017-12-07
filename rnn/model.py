@@ -45,7 +45,7 @@ mask = tf.placeholder(tf.int32, [None], name="mask")
 
 # Define weights
 weights = {
-    'out': tf.Variable(tf.random_normal([n_hidden, n_classes]))
+    'out': tf.Variable(tf.random_normal([2 * n_hidden, n_classes]))
 }
 biases = {
     'out': tf.Variable(tf.random_normal([n_classes]))
@@ -62,35 +62,21 @@ def dynamicRNN(x, seqlen, weights, biases):
     # Unstack to get a list of 'n_steps' tensors of shape (batch_size, n_input)
     x = tf.unstack(x, seq_max_len, 1)
 
-    # Define a lstm cell with tensorflow
-    lstm_cell = tf.contrib.rnn.BasicLSTMCell(n_hidden)
+    # Forward direction cell
+    lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
+    # Backward direction cell
+    lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(n_hidden, forget_bias=1.0)
 
     # Get lstm cell output, providing 'sequence_length' will perform dynamic
     # calculation.
     # outputs of shape [seq_max_len, batch_size, n_hidden]
-    outputs, _ = tf.contrib.rnn.static_rnn(lstm_cell, x, dtype=tf.float32,
-                                sequence_length=seqlen)
-
-    # When performing dynamic calculation, we must retrieve the last
-    # dynamically computed output, i.e., if a sequence length is 10, we need
-    # to retrieve the 10th output.
-    # However TensorFlow doesn't support advanced indexing yet, so we build
-    # a custom op that for each sample in batch size, get its length and
-    # get the corresponding relevant output.
-
-    # 'outputs' is a list of output at every timestep, we pack them in a Tensor
-    # and change back dimension to [batch_size, n_step, n_input]
-#     outputs = tf.stack(outputs)
-#     outputs = tf.transpose(outputs, [1, 0, 2])
-
-#     # Hack to build the indexing and retrieve the right output.
-#     batch_size = tf.shape(outputs)[0]
-#     # Start indices for each sample
-#     index = tf.range(0, batch_size) * seq_max_len + (seqlen - 1)
-#     # Indexing
-#     outputs = tf.gather(tf.reshape(outputs, [-1, n_hidden]), index)
-
-    # Linear activation, using outputs computed above
+    
+    try:
+        outputs, _, _ = tf.contrib.rnn.static_bidirectional_rnn(lstm_fw_cell, lstm_bw_cell, x,
+                                              dtype=tf.float32)
+    except Exception: # Old TensorFlow version only returns outputs not states
+        outputs = tf.contrib.rnn.static_bidirectional_rnn(lstm_fw_cell, lstm_bw_cell, x,
+                                        dtype=tf.float32)
     
     outputs = [tf.matmul(output, weights['out']) + biases['out'] for output in outputs]
     outputs = tf.stack(outputs)
@@ -117,6 +103,13 @@ def dynamicRNNAccuracy(outputs, y):
     accuracy = tf.reduce_mean(tf.cast(correct_pred, tf.float32))
     return accuracy
 
+def _print_debug_info(sess, batch_x, batch_y, batch_seqlen, batch_mask):
+    one = tf.constant(1, dtype=tf.int32)
+    print(sess.run([tf.shape(pred), tf.shape(outputs), tf.shape(reshaped_outputs), tf.shape(index),
+                    tf.shape(tf.equal(mask, one))], feed_dict={x: batch_x, y: batch_y,
+                                   seqlen: batch_seqlen,
+                                   mask:batch_mask}))
+
 outputs, index = dynamicRNN(x, seqlen, weights, biases)
 reshaped_outputs = tf.reshape(outputs, [-1, n_classes])
 pred = tf.gather(reshaped_outputs, index)
@@ -134,19 +127,14 @@ sess.run(init)
 
 # sess = tf_debug.LocalCLIDebugWrapperSession(sess)
 
-for step in range(1, 2):
+for step in range(1, training_steps + 1):
     batch_x, batch_y, batch_seqlen, batch_mask = trainset.next(batch_size)
 
-#     print(batch_seqlen)
-    # Run optimization op (backprop)
+#     Run optimization op (backprop)
     sess.run(optimizer, feed_dict={x: batch_x, y: batch_y,
                                    seqlen: batch_seqlen,
                                    mask:batch_mask})
-#     one = tf.constant(1, dtype=tf.int32)
-#     print(sess.run([tf.shape(pred), tf.shape(outputs), tf.shape(reshaped_outputs), tf.shape(index),
-#                     tf.shape(tf.equal(mask, one))], feed_dict={x: batch_x, y: batch_y,
-#                                    seqlen: batch_seqlen,
-#                                    mask:batch_mask}))
+
     if step % display_step == 0 or step == 1:
         # Calculate batch accuracy & loss
         acc = sess.run(accuracy, feed_dict={x: batch_x, y: batch_y,
@@ -156,10 +144,10 @@ for step in range(1, 2):
 
 print("Optimization Finished!")
 
-# # Calculate accuracy
-# test_data = testset.data
-# test_label = testset.labels
-# test_seqlen = testset.seqlen
-# print("Testing Accuracy:", \
-#     sess.run(accuracy, feed_dict={x: test_data, y: test_label,
-#                                   seqlen: test_seqlen}))
+# Calculate accuracy
+test_data = testset.data
+test_label = testset.labels
+test_seqlen = testset.seqlen
+print("Testing Accuracy:", \
+    sess.run(accuracy, feed_dict={x: test_data, y: test_label,
+                                  seqlen: test_seqlen}))
